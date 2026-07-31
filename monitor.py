@@ -228,27 +228,47 @@ class Config:
         self._defaults = defaults
 
     def get(self, path, default=None):
-        """Fetch a dotted path, e.g. 'failover.failback.clean_probes_required'."""
+        """Fetch a dotted path, e.g. 'failover.failback.clean_probes_required'.
+
+        Resolution order: the user's YAML, then the built-in DEFAULTS tree
+        (descended fully to the leaf), then the explicit `default` argument.
+
+        The previous version broke out of the descent on the first key missing
+        from the YAML, so it returned the partial DEFAULTS *subtree* (a dict)
+        instead of the leaf value — e.g. get('heartbeat.interval_seconds')
+        returned {'interval_seconds': 60} rather than 60, which then blew up any
+        caller doing time.sleep()/int()/+ on the result. This only surfaced on a
+        Pi with NO monitor_config.yaml (pure defaults). Fix: walk the user data
+        and the defaults tree independently, each all the way to the leaf.
+        """
         keys = path.split('.')
+
+        # 1. Try the user's config, descending as far as it goes.
         node = self._data
-        d_node = self._defaults
         found = True
         for k in keys:
-            d_node = d_node.get(k, {}) if isinstance(d_node, dict) else {}
             if isinstance(node, dict) and k in node:
                 node = node[k]
             else:
                 found = False
-                node = None
                 break
         if found:
             return node
-        # fall back to default tree, then explicit default
-        fallback = d_node if d_node != {} else default
-        if fallback is None and default is not None:
-            fallback = default
-        logger.warning("Config key '%s' missing — using default %r", path, fallback)
-        return fallback
+
+        # 2. Fall back to the DEFAULTS tree — descend ALL keys to the leaf.
+        d_node = self._defaults
+        for k in keys:
+            if isinstance(d_node, dict) and k in d_node:
+                d_node = d_node[k]
+            else:
+                # Not in defaults either — a genuinely unknown key. Warn loudly.
+                logger.warning("Config key '%s' not found in defaults — using %r",
+                               path, default)
+                return default
+        # Found a documented default. Normal on a defaults-only Pi, so log at
+        # DEBUG rather than WARNING to avoid flooding the journal every cycle.
+        logger.debug("Config key '%s' not set — using default %r", path, d_node)
+        return d_node
 
 
 def load_config():
