@@ -209,7 +209,15 @@ _DEFAULTS = {
     },
     'alerts': {
         'email_enabled': True,
-        'cooldown_seconds': 14400,
+        'cooldown_seconds': 14400,   # fallback if a severity isn't listed in 'cooldowns'
+        # Re-send interval for an UNRESOLVED alert, chosen by severity. The first
+        # email of any incident always goes out immediately; these only throttle
+        # the reminders while the condition persists.
+        'cooldowns': {
+            'CRITICAL': 21600,   # 6h  — leak / guests offline / frost: keep surfacing
+            'WARNING':  86400,   # 24h — sensor maintenance: at most once a day
+            'INFO':     604800,  # 7d  — e.g. "on 4G, guests fine": effectively once
+        },
         'info_after_seconds': 7200,
         'guests_online': {'source': 'ap_clients', 'min_stations': 1},
     },
@@ -464,7 +472,10 @@ def send_alert(severity, subject, body):
         logger.info("Email disabled — would have sent [%s] %s", severity, subject)
         return
 
-    cooldown = CFG.get('alerts.cooldown_seconds', 14400)
+    # Per-severity re-send interval; fall back to the flat cooldown_seconds if a
+    # severity isn't configured (keeps old configs working unchanged).
+    cooldowns = CFG.get('alerts.cooldowns', {}) or {}
+    cooldown = cooldowns.get(severity, CFG.get('alerts.cooldown_seconds', 14400))
     now = time.time()
     alert_state = _load_alert_state()
 
@@ -1524,7 +1535,7 @@ def handle_sensor_data(write_api, device_name, payload):
                     direction = "low" if temp < TEMP_LOW else "high"
                     threshold = f"<{TEMP_LOW}°C" if direction == "low" else f">{TEMP_HIGH}°C"
                     send_alert(
-                        'WARNING',
+                        'CRITICAL',
                         'Temperature alert',
                         f"Sensor '{device_name}' has been reporting a temperature "
                         f"{'below' if direction == 'low' else 'above'} the acceptable range "
