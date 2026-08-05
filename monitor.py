@@ -666,14 +666,26 @@ def detect_transport(primary_if, failover_if):
 
 def detect_gateway_from_lease(iface):
     """
-    Read the DHCP-provided gateway for <iface> from its dhcpcd lease.
+    Read the DHCP-provided gateway for <iface> even when it doesn't currently
+    hold the MAIN default route.
 
-    The route-based lookup only works while <iface> holds the MAIN default
-    route. On a Pi whose first boot is on 4G at a network it has never seen,
-    that never happens, so the gateway is never learned and failback stays
-    blocked forever. The lease still knows the router, regardless of which
-    interface currently owns the default route. Returns the IP or None.
+    On a Pi whose first boot is on 4G at a network it has never seen, <iface>
+    (broadband) never owns the default route, so the route-based lookup never
+    learns the broadband gateway and failback stays blocked forever. Both
+    NetworkManager and dhcpcd know the per-interface gateway regardless of which
+    interface owns the default. Returns the IP or None.
+
+    Tries NetworkManager first (Raspberry Pi OS Bookworm default), then dhcpcd
+    (older images) — so this works whichever the Pi runs.
     """
+    # NetworkManager: nmcli knows each device's gateway from its active lease.
+    r = _run(['nmcli', '-g', 'IP4.GATEWAY', 'device', 'show', iface], timeout=5)
+    if r and r.returncode == 0:
+        gw = r.stdout.decode('utf-8', 'ignore').strip()
+        if gw:
+            return gw
+
+    # dhcpcd (older Raspberry Pi OS): read the lease directly.
     r = _run(['dhcpcd', '-U', iface], timeout=5)
     if r and r.returncode == 0:
         for line in r.stdout.decode('utf-8', 'ignore').splitlines():
