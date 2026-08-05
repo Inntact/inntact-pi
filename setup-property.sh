@@ -51,25 +51,25 @@ else
     echo "NOTE: monitor_config.yaml missing — the monitor will use built-in defaults."
 fi
 
-# --- [1/6] hostname ---
-echo "[1/6] Setting hostname to $SLUG..."
+# --- [1/7] hostname ---
+echo "[1/7] Setting hostname to $SLUG..."
 hostnamectl set-hostname "$SLUG"
 sed -i "s/127.0.1.1.*/127.0.1.1\t$SLUG/" /etc/hosts
 
-# --- [2/6] Zigbee2MQTT config (GENERATE -> fresh, per-Pi Zigbee network) ---
-echo "[2/6] Installing Zigbee2MQTT configuration..."
+# --- [2/7] Zigbee2MQTT config (GENERATE -> fresh, per-Pi Zigbee network) ---
+echo "[2/7] Installing Zigbee2MQTT configuration..."
 cp /opt/inntact/configuration.yaml /opt/zigbee2mqtt/data/configuration.yaml
 chown root:root /opt/zigbee2mqtt/data/configuration.yaml
 chmod 644 /opt/zigbee2mqtt/data/configuration.yaml
 
-# --- [3/6] fresh SSH host keys (unique per Pi) ---
-echo "[3/6] Regenerating SSH host keys..."
+# --- [3/7] fresh SSH host keys (unique per Pi) ---
+echo "[3/7] Regenerating SSH host keys..."
 rm -f /etc/ssh/ssh_host_*
 ssh-keygen -A
 systemctl restart ssh
 
-# --- [4/6] guest WiFi (hostapd) ---
-echo "[4/6] Configuring guest WiFi ($WIFI_SSID)..."
+# --- [4/7] guest WiFi (hostapd) ---
+echo "[4/7] Configuring guest WiFi ($WIFI_SSID)..."
 cat > /etc/hostapd/hostapd.conf << EOF
 interface=wlan0
 driver=nl80211
@@ -88,8 +88,8 @@ rsn_pairwise=CCMP
 EOF
 sed -i 's|#DAEMON_CONF=""|DAEMON_CONF="/etc/hostapd/hostapd.conf"|' /etc/default/hostapd
 
-# --- [5/6] enable + start services ---
-echo "[5/6] Enabling and starting services..."
+# --- [5/7] enable + start services ---
+echo "[5/7] Enabling and starting services..."
 systemctl enable zigbee2mqtt inntact-monitor hostapd
 systemctl start mosquitto
 sleep 2
@@ -105,8 +105,14 @@ systemctl start dnsmasq
 # --- clean up the scp'd copies (the .env holds secrets) ---
 rm -f /home/pi/.env /home/pi/configuration.yaml /home/pi/monitor_config.yaml
 
-# --- [6/6] verify ---
-echo "[6/6] Service states:"
+# --- [6/7] refresh device code to the latest from GitHub ---
+# Keeps a Pi flashed from an older golden image on current monitor.py without a
+# re-image. Compile-checked by update-pi.sh; non-fatal if the Pi is offline.
+echo "[6/7] Refreshing device code from GitHub..."
+update-pi.sh || echo "  update-pi.sh skipped/failed (non-fatal) — the image's baked code is running; run it later once online."
+
+# --- [7/7] verify ---
+echo "[7/7] Service states:"
 for s in mosquitto zigbee2mqtt inntact-monitor hostapd dnsmasq wlan0-up; do
     printf "  %-16s %s\n" "$s" "$(systemctl is-active "$s")"
 done
