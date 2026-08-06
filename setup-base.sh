@@ -197,22 +197,40 @@ iptables -C FORWARD -i wlan0 -o eth0 -j ACCEPT 2>/dev/null || iptables -A FORWAR
 iptables -C FORWARD -i eth0 -o wlan0 -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || iptables -A FORWARD -i eth0 -o wlan0 -m state --state RELATED,ESTABLISHED -j ACCEPT
 netfilter-persistent save
 
+# Robust guest-interface bring-up. wlan0 is the guest-AP radio. The image can
+# boot with WiFi soft-blocked (systemd-rfkill restores a saved 'blocked' state),
+# which races the unblock. This helper unblocks and WAITS until it sticks, then
+# brings the link up and assigns the IP idempotently. The service runs AFTER
+# systemd-rfkill so the restored state can't re-block us.
+cat > /usr/local/bin/wlan0-up.sh << 'EOF'
+#!/bin/bash
+set -u
+for i in $(seq 1 15); do
+    rfkill unblock wifi
+    sleep 1
+    rfkill list wifi | grep -q "Soft blocked: yes" || break
+done
+ip link set wlan0 up
+ip addr replace 192.168.10.1/24 dev wlan0
+EOF
+chmod +x /usr/local/bin/wlan0-up.sh
+
 cat > /etc/systemd/system/wlan0-up.service << 'EOF'
 [Unit]
 Description=Bring up wlan0 with static IP
-After=sys-subsystem-net-devices-wlan0.device
+After=sys-subsystem-net-devices-wlan0.device systemd-rfkill.service
 Wants=sys-subsystem-net-devices-wlan0.device
 Before=hostapd.service dnsmasq.service
 [Service]
 Type=oneshot
-ExecStart=/usr/sbin/rfkill unblock wifi
-ExecStart=/bin/sleep 3
-ExecStart=/sbin/ip link set wlan0 up
-ExecStart=/sbin/ip addr add 192.168.10.1/24 dev wlan0
 RemainAfterExit=yes
+ExecStart=/usr/local/bin/wlan0-up.sh
 [Install]
 WantedBy=multi-user.target
 EOF
+
+# Drop any saved 'blocked' rfkill state so systemd-rfkill can't restore it at boot.
+rm -f /var/lib/systemd/rfkill/*
 
 mkdir -p /etc/systemd/system/hostapd.service.d
 cat > /etc/systemd/system/hostapd.service.d/override.conf << 'EOF'
